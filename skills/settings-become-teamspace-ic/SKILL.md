@@ -36,6 +36,54 @@ Check if already connected: if `~/Ametyst/protocols/<area>-protocols/.git` exist
 
 ---
 
+### Step 1.5 — Notion MCP fallback (only if missing)
+
+The Notion MCP is normally installed by `/settings-onboarding`. If the user skipped it (or this is an upgrade from a pre-Notion state), install it now since every area-teamspace except General has Notion databases.
+
+Check if `notionApi` is already configured:
+
+```bash
+grep -q '"notionApi"' ~/.claude/settings.json 2>/dev/null && echo "present" || echo "missing"
+```
+
+**If present:** skip this step entirely.
+
+**If missing:** tell the user:
+
+```
+The Notion MCP server isn't configured yet. You need it to interact with
+the <area> Notion databases.
+
+Your admin should have sent you a Notion Integration Secret (starts with `ntn_`).
+If you haven't received it yet, ask them.
+
+## 1. Install the Notion MCP package
+
+Run in your terminal:
+
+  npm install -g @notionhq/notion-mcp-server
+
+## 2. Configure settings.json
+
+Open ~/.claude/settings.json and add the following entry inside the "mcpServers" key
+(alongside the existing "slack" entry):
+
+    "notionApi": {
+      "command": "npx",
+      "args": ["-y", "@notionhq/notion-mcp-server"],
+      "env": {
+        "NOTION_TOKEN": "ntn_paste-your-token-here"
+      }
+    }
+
+After saving, restart Claude Code so the new MCP server loads.
+Tell me when you're done.
+```
+
+Use `AskUserQuestion` to wait for confirmation. Do NOT proceed until Notion MCP is configured.
+
+---
+
 ### Step 2 — Clone the area's protocols repo
 
 ```bash
