@@ -40,26 +40,41 @@ fi
 
 ---
 
-### Step 3 — Discover candidate files in personal OS
+### Step 3 — Ask the admin which files to share
+
+The admin's personal OS may contain files for multiple areas (rules, skills,
+agents, guides for areas other than the one selected in Step 1). Do NOT
+auto-discover everything and assume it belongs to this area. Instead, let
+the admin pick explicitly.
 
 Ask: "Where are your master copies? (default: current working directory's `.claude/`)"
 
 Default is `<cwd>/.claude/`. Confirm.
 
-For each subfolder (`rules`, `skills`, `agents`, `guides`):
-- Glob `<personal-os>/<sub>/**/*` (excluding `.gitkeep`)
-- Compare each file's content with the corresponding path in `$CLONE/<sub>/`
-- Build two lists:
-  - **NEW** — exists in personal OS, missing in clone
-  - **CHANGED** — exists in both, content differs
+Then, for each subfolder in order (`rules`, `skills`, `agents`, `guides`):
+
+1. Glob `<personal-os>/<sub>/**/*` (excluding `.gitkeep` and hidden files).
+2. Show the list and use `AskUserQuestion` (multi-select):
+   "Which files/folders from `<sub>/` do you want to share to `<area>-protocols`? (skip if none)"
+3. Skip a subfolder entirely if the admin selects nothing.
+
+Collect the union of selected paths. If nothing selected across all subfolders, tell the admin "nothing to share" and stop.
 
 ---
 
-### Step 4 — Present diff and let admin select
+### Step 4 — Compute diff on selected files only
+
+For each selected path, compare its content against the corresponding path in `$CLONE`:
+
+- **NEW** — selected path is missing from `$CLONE`
+- **CHANGED** — exists in both, content differs
+- **IDENTICAL** — already up to date (drop from the push set)
 
 Show a summary:
 
 ```
+Selected for share to <area>-protocols:
+
 NEW files (will be added):
   - skills/eng-sprint-planner/SKILL.md
   - rules/some-rule.md
@@ -67,11 +82,14 @@ NEW files (will be added):
 CHANGED files (will be replaced in clone):
   - skills/ops-brainstorm/SKILL.md
   - rules/general-teamspace-communication/slack-protocol.md
+
+IDENTICAL (already up to date — skipping):
+  - rules/notion-content-rules.md
 ```
 
 For each CHANGED entry, optionally show a brief `diff -u` summary (lines added/removed).
 
-Use `AskUserQuestion` to let the admin select which files to push (multi-select). Default: all.
+If the resulting NEW + CHANGED set is empty, tell the admin "nothing to push" and stop. Otherwise, ask for final confirmation: "Push these N files to `<area>-protocols`?"
 
 ---
 
