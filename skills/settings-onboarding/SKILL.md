@@ -14,7 +14,7 @@ One-time skill. Connects a new agent to the Ametyst ecosystem by:
 
 After this skill, the user runs `/settings-become-teamspace-ic` for each area they have access to.
 
-**Prerequisite:** admin (Patrick) has shared a Slack Bot Token, granted GitHub access to `ametyst-business`, and invited the bot to `#general`.
+**Prerequisite:** admin has shared a Slack Bot Token, granted GitHub access to `ametyst-business`, and invited the bot to `#general`.
 
 ---
 

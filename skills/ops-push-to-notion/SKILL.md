@@ -1,5 +1,5 @@
 ---
-description: Push local files to Notion databases. Supports calls, brainstorm outputs, docs, or any .md file. Use whenever Patrick says "push to Notion", "push calls", "send to Notion", "upload to Notion", or similar.
+description: Push local files to Notion databases. Supports calls, brainstorm outputs, docs, or any .md file. Use whenever the user says "push to Notion", "push calls", "send to Notion", "upload to Notion", or similar.
 argument-hint: "[filename or leave empty to browse]"
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion, mcp__notionApi__API-post-page, mcp__notionApi__API-patch-page, mcp__notionApi__API-patch-block-children, mcp__notionApi__API-query-data-source, mcp__notionApi__API-retrieve-a-page, mcp__notionApi__API-get-block-children, mcp__slack__slack_post_message, mcp__slack__slack_get_channel_history
 ---
@@ -14,7 +14,7 @@ The Notion and Slack protocol files for each teamspace are already loaded in the
 
 ### Step 1 — What are you pushing?
 
-1. Ask Patrick **what type of content** he wants to push:
+1. Ask the user **what type of content** he wants to push:
    - **Call** — analyzed call from `meetings/calls-analyzed/`
    - **Generic file** — any `.md` file from anywhere in the project
 
@@ -28,22 +28,22 @@ The Notion and Slack protocol files for each teamspace are already loaded in the
 
    **For generic files:**
    - If a filename was passed as argument, use that.
-   - Otherwise ask Patrick for the file path or glob pattern.
+   - Otherwise ask the user for the file path or glob pattern.
    - Show the list of matched files.
 
-3. Ask Patrick to **select which file(s)** to push.
+3. Ask the user to **select which file(s)** to push.
 
 ---
 
 ### Step 2 — Where does it go?
 
-1. Ask Patrick which **teamspace** — Strategy or Governance.
+1. Ask the user which **teamspace** — Strategy or Governance.
 
 2. **Propose** the target database based on content type:
    - Calls → Meetings database
-   - Generic files → ask Patrick which database (show the list from the teamspace's notion-protocol)
+   - Generic files → ask the user which database (show the list from the teamspace's notion-protocol)
 
-3. **Ask for confirmation** — Patrick can override the proposed database.
+3. **Ask for confirmation** — the user can override the proposed database.
 
 This determines the `database_id`, `data_source_id`, Slack channel ID, and Team value from the teamspace's notion-protocol file.
 
@@ -62,14 +62,14 @@ For each selected file, build the Notion page payload.
 | `Category` (multi_select) | Infer from content | See inference rules below |
 | `Tags` (multi_select) | Infer from content | **Strategy only** — skip for Governance |
 | `Team` (multi_select) | Selected teamspace | `["Strategy"]` or `["Governance"]` |
-| `People` (relation) | Patrick | Always set — Patrick is the call owner |
+| `People` (relation) | the user | Always set — the user is the call owner |
 
 **Category inference rules:**
 - External person (investor, professor, partner, customer) → `Customer call`
 - Internal team planning/standup → `Planning` or `Standup`
 - Presentation or demo → `Presentation`
 - Retrospective → `Retro`
-- If unclear → ask Patrick
+- If unclear → ask the user
 
 **Tags inference rules (Strategy only — skip entirely for Governance):**
 - Investor/VC call → `Investor meeting`
@@ -86,9 +86,9 @@ For each selected file, build the Notion page payload.
 
 | Notion property | Source | Notes |
 |---|---|---|
-| Title field (varies by DB) | H1 heading of the file, or filename | Ask Patrick to confirm |
+| Title field (varies by DB) | H1 heading of the file, or filename | Ask the user to confirm |
 | `Team` (multi_select) | Selected teamspace | `["Strategy"]` or `["Governance"]` |
-| Other properties | Ask Patrick | Show available properties from the schema for the target DB |
+| Other properties | Ask the user | Show available properties from the schema for the target DB |
 
 #### Page body content (both modes)
 
@@ -96,7 +96,7 @@ Write the file content as a single `code` block with `language: "markdown"`. If 
 
 #### Preview
 
-Show Patrick a formatted preview of each entry before pushing:
+Show the user a formatted preview of each entry before pushing:
 
 ```
 File: [filename]
@@ -108,7 +108,7 @@ Properties: [key properties set]
 Body preview (first 3 lines)...
 ```
 
-Ask for confirmation before proceeding. Patrick can adjust any property at this point.
+Ask for confirmation before proceeding. The user can adjust any property at this point.
 
 ---
 
@@ -116,7 +116,7 @@ Ask for confirmation before proceeding. Patrick can adjust any property at this 
 
 For each confirmed file:
 
-1. **Check for duplicates** — query the target database using `API-query-data-source`, filtering by title. If a match is found, warn Patrick and ask whether to skip or create anyway.
+1. **Check for duplicates** — query the target database using `API-query-data-source`, filtering by title. If a match is found, warn the user and ask whether to skip or create anyway.
 2. **Create the page** using `API-post-page` with the target `database_id` as parent. Set all properties from the mapping.
 3. **Add the body** using `API-patch-block-children` after page creation — append the markdown code block as a child of the new page.
 4. **On success**, update `memory.md` in this skill's folder — append a row to the tracking table.
@@ -126,7 +126,7 @@ For each confirmed file:
 
 ### Step 5 — Slack announcement
 
-After all files are pushed, ask Patrick: **"Want to announce on Slack?"**
+After all files are pushed, ask the user: **"Want to announce on Slack?"**
 
 If yes, post one message per pushed file on the teamspace Slack channel using the appropriate format:
 
@@ -149,7 +149,7 @@ Fields: [key fields set]
 
 ### Step 6 — Local file cleanup (calls only)
 
-After pushing call files, ask Patrick what to do with each local file in `meetings/calls-analyzed/`:
+After pushing call files, ask the user what to do with each local file in `meetings/calls-analyzed/`:
 
 - **Move** — ask for the destination folder (e.g. `meetings/calls-archived/`)
 - **Delete** — remove the file from the repo
@@ -161,7 +161,7 @@ Skip this step entirely for generic files.
 
 ### Step 7 — Confirm
 
-Tell Patrick:
+Tell the user:
 - Which files were pushed (created vs updated)
 - Which teamspace and database
 - What was posted on Slack (if anything)
@@ -190,7 +190,7 @@ Format:
 
 ### Edge cases
 
-- **Empty source** → inform Patrick, suggest relevant action (e.g. `/analyze-calls` for calls).
-- **All files already pushed** → inform Patrick, nothing to do.
+- **Empty source** → inform the user, suggest relevant action (e.g. `/analyze-calls` for calls).
+- **All files already pushed** → inform the user, nothing to do.
 - **Notion API error** → report the error, do not mark as pushed, continue with next file.
-- **Duplicate found** → always check before pushing. Warn Patrick and ask whether to skip or create anyway.
+- **Duplicate found** → always check before pushing. Warn the user and ask whether to skip or create anyway.
