@@ -37,15 +37,17 @@ The Notion and Slack protocol files for each teamspace are already loaded in the
 
 ### Step 2 — Where does it go?
 
-1. Ask the user which **teamspace** — Strategy or Governance.
+1. **Discover connected teamspaces** by listing folders matching `.claude/rules/*-teamspace-communication/` in the project root. Each folder name with the `-teamspace-communication` suffix removed is a teamspace (e.g. `strategy`, `governance`, `product`, `gtm`). Exclude `general` from the list — it has no Notion databases.
 
-2. **Propose** the target database based on content type:
+2. Ask the user which **teamspace** to push to, presenting only the discovered list. Do not hardcode teamspace names.
+
+3. **Propose** the target database based on content type:
    - Calls → Meetings database
    - Generic files → ask the user which database (show the list from the teamspace's notion-protocol)
 
-3. **Ask for confirmation** — the user can override the proposed database.
+4. **Ask for confirmation** — the user can override the proposed database.
 
-This determines the `database_id`, `data_source_id`, Slack channel ID, and Team value from the teamspace's notion-protocol file.
+This determines the `database_id`, `data_source_id`, and Slack channel ID from the teamspace's `notion-protocol.md` and `slack-protocol.md`.
 
 ---
 
@@ -58,36 +60,18 @@ For each selected file, build the Notion page payload.
 | Notion property | Source | Notes |
 |---|---|---|
 | `Meeting name` (title) | H1 heading of the file | e.g. "Constitution", "Adyant Dagur" |
-| `Due date` (date) | `Date:` field in the file | Parse ISO datetime, use date portion |
-| `Category` (multi_select) | Infer from content | See inference rules below |
-| `Tags` (multi_select) | Infer from content | **Strategy only** — skip for Governance |
-| `Team` (multi_select) | Selected teamspace | `["Strategy"]` or `["Governance"]` |
-| `People` (relation) | the user | Always set — the user is the call owner |
+| `Date` (date) | `Date:` field in the file | Parse ISO datetime, use date portion |
+| `Category` (multi_select) | Infer from content | Pick exactly one option from the `Category` list in the target teamspace's `notion-schema.md`. If unclear → ask the user. |
+| `Tags` (multi_select) | Infer from content | Pick one or more options from the `Tags` list in the target teamspace's `notion-schema.md`. Skip if that teamspace's Meetings DB has no `Tags` field. |
+| `Contributors` (relation) | the user | Set the user as Contributor. Skip if that teamspace's Meetings DB has no `Contributors` relation (e.g. Governance). |
 
-**Category inference rules:**
-- External person (investor, professor, partner, customer) → `Customer call`
-- Internal team planning/standup → `Planning` or `Standup`
-- Presentation or demo → `Presentation`
-- Retrospective → `Retro`
-- If unclear → ask the user
-
-**Tags inference rules (Strategy only — skip entirely for Governance):**
-- Investor/VC call → `Investor meeting`
-- Legal/notary/compliance → `Legal meeting`
-- Bank/finance → `Bank meeting`
-- Crypto/blockchain → `Crypto meeting`
-- Incubator/accelerator → `Incubator`
-- Professor/university → `Professor meeting`
-- Dev partnership → `Dev partnership`
-- Fintech → `Fintech meeting`
-- None match → `Other`
+**Category & Tags inference:** each teamspace defines its own valid options for `Category` and `Tags` in its `notion-schema.md`. Always consult the target teamspace's schema before inferring. Pick the option(s) that best match the call content. If multiple plausibly fit or none clearly fit, ask the user.
 
 #### Generic mode — property mapping
 
 | Notion property | Source | Notes |
 |---|---|---|
 | Title field (varies by DB) | H1 heading of the file, or filename | Ask the user to confirm |
-| `Team` (multi_select) | Selected teamspace | `["Strategy"]` or `["Governance"]` |
 | Other properties | Ask the user | Show available properties from the schema for the target DB |
 
 #### Page body content (both modes)
