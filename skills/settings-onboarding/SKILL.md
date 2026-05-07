@@ -1,13 +1,15 @@
 ---
-description: One-time onboarding skill that connects a new team member's agent to the Ametyst ecosystem. Configures Slack + Notion MCP servers, clones general-protocols, symlinks rules/skills/agents into the user's .claude/, merges the Ametyst CLAUDE.md snippet into their CLAUDE.md, and (optionally) builds self-context. Use whenever a new person joins Ametyst, or says "onboard", "set up Ametyst", "connect to Ametyst", or "settings onboarding".
-allowed-tools: Read, Write, Edit, Glob, Bash(gh *), Bash(mkdir *), Bash(ln *), Bash(node *), Bash(npm *), AskUserQuestion, mcp__slack__slack_post_message
+description: One-time onboarding skill that connects a new team member's agent to the Ametyst ecosystem. Configures Slack + Notion MCP servers (global in ~/.claude/settings.json or project-only in <working-dir>/.claude/settings.local.json — user's choice), clones general-protocols, symlinks rules/skills/agents into the user's .claude/, merges the Ametyst CLAUDE.md snippet into their CLAUDE.md, and (optionally) builds self-context. Use whenever a new person joins Ametyst, or says "onboard", "set up Ametyst", "connect to Ametyst", or "settings onboarding".
+allowed-tools: Read, Write, Edit, Glob, Bash(gh *), Bash(mkdir *), Bash(ln *), Bash(node *), Bash(npm *), Bash(git *), Bash(grep *), Bash(printf *), AskUserQuestion, mcp__slack__slack_post_message
 ---
 
 ## settings-onboarding
 
 One-time skill. Connects a new agent to the Ametyst ecosystem by:
 - Receiving Slack + Notion tokens from the admin
-- Installing and configuring both MCP servers in `~/.claude/settings.json` (user-level, so they work across all the user's projects)
+- Installing and configuring both MCP servers — the user picks the scope:
+  - **Global** in `~/.claude/settings.json` (default; works across all the user's projects)
+  - **Project-only** in `<working-dir>/.claude/settings.local.json` (gitignored, so tokens stay out of git)
 - Cloning `ametyst-business/general-protocols` into `~/Ametyst/protocols/general-protocols`
 - Creating symlinks from the cloned repo into the user's `.claude/{rules,skills,agents}/`
 - Merging the `general-protocols/CLAUDE.md` snippet (between `AMETYST:BLOCK:START/END` markers) into the user's `.claude/CLAUDE.md`
@@ -26,6 +28,11 @@ Use `AskUserQuestion`:
 
 1. **Name** — first name (used throughout the setup)
 2. **Working directory** — absolute path of the repo where the agent operates (default: current working directory). This is the repo whose `.claude/` will be patched.
+3. **MCP install scope** — where to install the Slack + Notion MCP servers:
+   - **Global** (`~/.claude/settings.json`) — recommended. MCP servers are available across **all** the user's projects. The file lives in the user's home directory and is never committed to any repo.
+   - **Project-only** (`<working-dir>/.claude/settings.local.json`) — MCP servers only load when Claude Code runs inside this repo. Use this if the user wants to keep tokens scoped to this single project (e.g. they juggle multiple workspaces with different Slack/Notion accounts).
+
+   **Important:** for the project-only option we use `settings.local.json` (NOT `settings.json`). `settings.local.json` is **convention-only** for being local — Claude Code does NOT auto-add it to `.gitignore`. So if the user picks project scope, the skill MUST verify (and patch) the repo's `.gitignore` in Step 3 before writing tokens. Never write MCP tokens into a project's `settings.json` — that file is committed to git and would leak secrets.
 
 ---
 
@@ -51,7 +58,50 @@ Use `AskUserQuestion` to wait for the user to confirm. If the user only has the 
 
 ### Step 3 — Prerequisites & MCP server configuration (human step)
 
-Tell the user:
+**Step 3.0 — Gitignore guard (project scope only).**
+
+If the user picked **project scope** in Step 1, the agent MUST run this check BEFORE giving the user the configuration instructions below:
+
+```bash
+WORKDIR="<working-dir>"
+PATTERN=".claude/settings.local.json"
+
+# Does the repo's gitignore already cover settings.local.json?
+if git -C "$WORKDIR" check-ignore -q "$PATTERN" 2>/dev/null; then
+  # It's ignored — but check WHY. If only by a global gitignore (e.g. ~/.config/git/ignore),
+  # that protection won't survive on other machines. Confirm the repo's own .gitignore covers it.
+  if ! grep -qE "(^|/)\.claude/settings\.local\.json$|(^|/)\*\*/\.claude/settings\.local\.json$|(^|/)settings\.local\.json$" "$WORKDIR/.gitignore" 2>/dev/null; then
+    echo "PATCH: settings.local.json is ignored only by a global gitignore — adding entry to repo .gitignore for portability."
+    printf '\n# Claude Code local settings (contains MCP tokens — never commit)\n.claude/settings.local.json\n' >> "$WORKDIR/.gitignore"
+  fi
+else
+  # Not ignored at all — must patch the repo's .gitignore.
+  echo "PATCH: adding .claude/settings.local.json to repo .gitignore."
+  printf '\n# Claude Code local settings (contains MCP tokens — never commit)\n.claude/settings.local.json\n' >> "$WORKDIR/.gitignore"
+fi
+
+# Verify
+git -C "$WORKDIR" check-ignore -v "$PATTERN" || {
+  echo "ERROR: settings.local.json is still not ignored. Stop. Do not write tokens."
+  exit 1
+}
+```
+
+Tell the user (only when patched):
+
+```
+I added `.claude/settings.local.json` to your repo's .gitignore so your
+Slack/Notion tokens stay out of git. Commit that .gitignore change before
+pushing — otherwise the protection only exists locally.
+```
+
+**If the agent CAN'T verify the gitignore protection (check fails), STOP** — do not proceed to write tokens. Surface the error and ask the user to add the entry manually, then retry.
+
+For **global scope**, skip Step 3.0 entirely — `~/.claude/settings.json` lives outside any repo, so there's nothing to gitignore.
+
+---
+
+Then tell the user:
 
 ```
 Now let's make sure you have the right tools installed and configure the MCP servers.
@@ -97,10 +147,18 @@ Run this in your terminal:
 
 This installs both MCP servers globally so they're available to Claude Code.
 
-## 3. Configure settings.json
+## 3. Configure the settings file
 
-Open (or create) the file ~/.claude/settings.json and add the following
-under the "mcpServers" key. If the file already exists, merge this into it.
+Open (or create) the settings file at the path chosen in Step 1, and add
+the following under the "mcpServers" key. If the file already exists, merge
+this into it (don't overwrite existing keys like "permissions").
+
+- **Global scope:** `~/.claude/settings.json`
+- **Project scope:** `<working-dir>/.claude/settings.local.json`
+  (NOT `settings.json` — `settings.local.json` is gitignored so your
+  tokens never get committed.)
+
+The JSON schema is **identical** in both files — only the path differs:
 
 {
   "mcpServers": {
@@ -265,7 +323,7 @@ Tell the user:
 ```
 Onboarding complete.
 
-- Slack MCP configured + verified
+- Slack MCP configured + verified (scope: <global | project-only>, file: <path used>)
 - Notion MCP configured (verification deferred to first area join)
 - general-protocols cloned to ~/Ametyst/protocols/general-protocols
 - Symlinked into <working-dir>/.claude/{rules,skills,agents}/
