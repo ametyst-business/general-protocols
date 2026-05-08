@@ -211,23 +211,50 @@ If the post fails with `not_in_channel`, ask the user to have the admin run `/in
 
 ### Step 5 — Clone general-protocols
 
+The Ametyst protocols live under `~/Ametyst/protocols/` — an umbrella directory containing one cloned repo per area. This step adds the first one (`general-protocols/`); `/settings-become-teamspace-ic` later adds `<area>-protocols/` per area joined. Skills, rules, agents, and guides are then symlinked from these clones into the user's `.claude/`, so a `git pull` in any clone updates everyone at once.
+
 ```bash
 mkdir -p ~/Ametyst/protocols
-gh repo clone ametyst-business/general-protocols ~/Ametyst/protocols/general-protocols 2>/dev/null || git -C ~/Ametyst/protocols/general-protocols pull --rebase --quiet
+gh repo clone ametyst-business/general-protocols ~/Ametyst/protocols/general-protocols 2>/dev/null \
+  || git -C ~/Ametyst/protocols/general-protocols pull --rebase --quiet
 ```
 
 If clone fails (no access), tell the user to ask the admin to confirm GitHub access to `ametyst-business`.
 
 ---
 
-### Step 6 — Symlink rules / skills / agents into user's `.claude/`
+### Step 6 — Symlink rules / skills / agents / guides into user's `.claude/`
 
-For each of `rules`, `skills`, `agents` in `~/Ametyst/protocols/general-protocols/`, iterate over its top-level entries (files or folders) and create a symlink in the corresponding subdir of `<working-dir>/.claude/`:
+**Invariants** — these MUST hold after this step:
+- `.claude/rules/`, `.claude/skills/`, `.claude/agents/`, `.claude/guides/` are **real directories**, never top-level symlinks. A top-level symlink (e.g. `.claude/skills` → `~/Ametyst/protocols/general-protocols/skills/`) breaks IDE display (VS Code/Cursor don't show nested symlinks) and pollutes the shared protocols repo when `/settings-become-teamspace-ic` later adds area entries inside them.
+- Each entry inside is an individual symlink pointing directly at the source — never symlink-inside-symlink (which causes circular `ln -s` behavior).
+- Guides go under `.claude/guides/<source>/` (here `general/`) — never flat in `.claude/guides/`. This keeps provenance clear once multiple area-protocols are connected.
+- Symlink targets have no trailing slash. Some shells expand globs with one (`for entry in dir/*` may yield `dir/foo/`); `ln -s target/ link` is silently treated as a directory ref by macOS, losing symlink metadata so VS Code/Cursor stop showing the arrow → on the link. We strip with `${entry%/}`.
 
 ```bash
 SRC="$HOME/Ametyst/protocols/general-protocols"
 DST="<working-dir>/.claude"
 
+# CONVERT: if a previous (buggy) install left .claude/<sub> as a top-level symlink,
+# convert it into a real directory by re-symlinking its contents individually.
+# Idempotent — no-op on a fresh install where these directories don't exist yet.
+for sub in rules skills agents guides; do
+  if [ -L "$DST/$sub" ]; then
+    echo "CONVERT: $DST/$sub is a top-level symlink — converting to a real directory."
+    real=$(readlink "$DST/$sub")
+    real="${real%/}"
+    rm "$DST/$sub"
+    mkdir -p "$DST/$sub"
+    for entry in "$real"/*; do
+      [ -e "$entry" ] || continue
+      name=$(basename "$entry")
+      [ "$name" = ".gitkeep" ] && continue
+      ln -sf "${entry%/}" "$DST/$sub/$name"
+    done
+  fi
+done
+
+# SYMLINK rules / skills / agents — flat under .claude/<sub>/.
 for sub in rules skills agents; do
   mkdir -p "$DST/$sub"
   for entry in "$SRC/$sub"/*; do
@@ -239,12 +266,34 @@ for sub in rules skills agents; do
       echo "SKIP: $target exists and is not a symlink"
       continue
     fi
-    ln -sf "$entry" "$target"
+    [ -L "$target" ] && rm "$target"
+    ln -sf "${entry%/}" "$target"
   done
 done
+
+# SYMLINK guides — under .claude/guides/general/ (area-isolated).
+mkdir -p "$DST/guides/general"
+guides_count=0
+for entry in "$SRC/guides"/*; do
+  [ -e "$entry" ] || continue
+  name=$(basename "$entry")
+  [ "$name" = ".gitkeep" ] && continue
+  target="$DST/guides/general/$name"
+  if [ -e "$target" ] && [ ! -L "$target" ]; then
+    echo "SKIP: $target exists and is not a symlink"
+    continue
+  fi
+  [ -L "$target" ] && rm "$target"
+  ln -sf "${entry%/}" "$target"
+  guides_count=$((guides_count+1))
+done
+
+if [ "$guides_count" -eq 0 ]; then
+  echo "NOTE: $DST/guides/general/ is empty — general-protocols has no guides yet (expected)."
+fi
 ```
 
-Report which symlinks were created.
+Report which symlinks were created. If any `CONVERT:` lines fired, also tell the user to inspect `~/Ametyst/protocols/general-protocols/` for stray entries that may have been written into the shared repo by the previous buggy install (and ask the admin to clean them up).
 
 ---
 
@@ -326,11 +375,21 @@ Onboarding complete.
 - Slack MCP configured + verified (scope: <global | project-only>, file: <path used>)
 - Notion MCP configured (verification deferred to first area join)
 - general-protocols cloned to ~/Ametyst/protocols/general-protocols
-- Symlinked into <working-dir>/.claude/{rules,skills,agents}/
+- Symlinked into <working-dir>/.claude/{rules,skills,agents,guides/general}/
 - CLAUDE.md snippet merged
 - Self-context: <created | skipped>
 
+How the symlinks work (one-time explainer):
+A symlink is a file that points at another file. Each entry under
+.claude/{rules,skills,agents,guides}/ is a symlink into
+~/Ametyst/protocols/<area>-protocols/. So when the admin pushes a
+protocol update upstream, you pick it up by `git pull`-ing the cloned
+repo — no copying, no manual sync. Don't edit the files inside .claude/
+directly unless you intend to PR a change to the protocols repo: edits
+write back to the clone.
+
 Next steps:
 - For each area you have access to, run /settings-become-teamspace-ic
-- Pull latest protocols anytime with: git -C ~/Ametyst/protocols/general-protocols pull
+- Pull latest protocols anytime with:
+    git -C ~/Ametyst/protocols/general-protocols pull
 ```

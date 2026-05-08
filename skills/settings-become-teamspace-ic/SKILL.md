@@ -22,7 +22,9 @@ What it does:
 
 ### Step 1 — Pick area and check access
 
-Use `AskUserQuestion`: "Which area? (strategy, governance, product, gtm)"
+Use `AskUserQuestion`: "Which area? (strategy, product, gtm)"
+
+> `governance` is intentionally **not** offered as an IC area here — it's an admin-only teamspace (legal, fundraising, cap table, IP). Governance access is granted directly by the admin via the admin onramp, not through this self-serve skill. If a contributor explicitly asks for governance, stop and tell them to coordinate with the admin.
 
 Verify the user has GitHub access:
 
@@ -40,10 +42,17 @@ Check if already connected: if `~/Ametyst/protocols/<area>-protocols/.git` exist
 
 The Notion MCP is normally installed by `/settings-onboarding`. If the user skipped it (or this is an upgrade from a pre-Notion state), install it now since every area-teamspace except General has Notion databases.
 
-Check if `notionApi` is already configured:
+Check if `notionApi` is already configured. The user may have picked global or project scope during `/settings-onboarding`, so check **both** files:
 
 ```bash
-grep -q '"notionApi"' ~/.claude/settings.json 2>/dev/null && echo "present" || echo "missing"
+WORKDIR="<working-dir>"
+NOTION_PRESENT="missing"
+if [ -f ~/.claude/settings.json ] && grep -q '"notionApi"' ~/.claude/settings.json 2>/dev/null; then
+  NOTION_PRESENT="present (global ~/.claude/settings.json)"
+elif [ -f "$WORKDIR/.claude/settings.local.json" ] && grep -q '"notionApi"' "$WORKDIR/.claude/settings.local.json" 2>/dev/null; then
+  NOTION_PRESENT="present (project $WORKDIR/.claude/settings.local.json)"
+fi
+echo "$NOTION_PRESENT"
 ```
 
 **If present:** skip this step entirely.
@@ -63,9 +72,11 @@ Run in your terminal:
 
   npm install -g @notionhq/notion-mcp-server
 
-## 2. Configure settings.json
+## 2. Configure your settings file
 
-Open ~/.claude/settings.json and add the following entry inside the "mcpServers" key
+Open the same file you used during /settings-onboarding — that's
+`~/.claude/settings.json` (global scope) or `<working-dir>/.claude/settings.local.json`
+(project scope) — and add the following entry inside the "mcpServers" key
 (alongside the existing "slack" entry):
 
     "notionApi": {
@@ -94,14 +105,39 @@ gh repo clone ametyst-business/<area>-protocols ~/Ametyst/protocols/<area>-proto
 
 ---
 
-### Step 3 — Symlink rules / skills / agents
+### Step 3 — Symlink rules / skills / agents / guides
 
-For each of `rules`, `skills`, `agents` in `~/Ametyst/protocols/<area>-protocols/`, symlink each top-level entry into `<working-dir>/.claude/<sub>/`:
+**Invariants** — these MUST hold after this step:
+- `.claude/rules/`, `.claude/skills/`, `.claude/agents/`, `.claude/guides/` in the user's working dir are **real directories**, never top-level symlinks. If a previous (buggy) onboarding left one of these as a symlink into `~/Ametyst/protocols/general-protocols/<sub>/`, the area-specific entries would land **inside the shared general-protocols repo** — polluting it for everyone. The conversion block below detects and fixes this before any new symlink is created.
+- Each entry inside is an individual symlink pointing directly at the source — never symlink-inside-symlink (which produces circular self-references like `admin-ingest-and-share-wiki/admin-ingest-and-share-wiki → ...`).
+- Guides go under `.claude/guides/<area>/` (e.g. `strategy/`) — never flat. With multiple areas connected, flat guides mix file provenance and become unreadable.
+- Symlink targets have no trailing slash. Some shells (zsh on macOS depending on globbing options) expand globs with one; `ln -s target/ link` is silently treated as a directory ref by macOS, dropping symlink metadata so VS Code/Cursor don't show the arrow → on the link. Strip with `${entry%/}`.
 
 ```bash
 SRC="$HOME/Ametyst/protocols/<area>-protocols"
 DST="<working-dir>/.claude"
+AREA="<area>"
 
+# CONVERT: if a previous (buggy) install left .claude/<sub> as a top-level symlink,
+# convert it into a real directory by re-symlinking its contents individually.
+# Idempotent — no-op if .claude/<sub> is already a real directory.
+for sub in rules skills agents guides; do
+  if [ -L "$DST/$sub" ]; then
+    echo "CONVERT: $DST/$sub is a top-level symlink — converting to a real directory."
+    real=$(readlink "$DST/$sub")
+    real="${real%/}"
+    rm "$DST/$sub"
+    mkdir -p "$DST/$sub"
+    for entry in "$real"/*; do
+      [ -e "$entry" ] || continue
+      name=$(basename "$entry")
+      [ "$name" = ".gitkeep" ] && continue
+      ln -sf "${entry%/}" "$DST/$sub/$name"
+    done
+  fi
+done
+
+# SYMLINK rules / skills / agents — flat under .claude/<sub>/.
 for sub in rules skills agents; do
   mkdir -p "$DST/$sub"
   for entry in "$SRC/$sub"/*; do
@@ -113,12 +149,34 @@ for sub in rules skills agents; do
       echo "SKIP: $target exists and is not a symlink"
       continue
     fi
-    ln -sf "$entry" "$target"
+    [ -L "$target" ] && rm "$target"
+    ln -sf "${entry%/}" "$target"
   done
 done
+
+# SYMLINK guides — under .claude/guides/<area>/ (area-isolated).
+mkdir -p "$DST/guides/$AREA"
+guides_count=0
+for entry in "$SRC/guides"/*; do
+  [ -e "$entry" ] || continue
+  name=$(basename "$entry")
+  [ "$name" = ".gitkeep" ] && continue
+  target="$DST/guides/$AREA/$name"
+  if [ -e "$target" ] && [ ! -L "$target" ]; then
+    echo "SKIP: $target exists and is not a symlink"
+    continue
+  fi
+  [ -L "$target" ] && rm "$target"
+  ln -sf "${entry%/}" "$target"
+  guides_count=$((guides_count+1))
+done
+
+if [ "$guides_count" -eq 0 ]; then
+  echo "NOTE: $DST/guides/$AREA/ is empty — $AREA-protocols has no guides yet (expected for new areas)."
+fi
 ```
 
-Report which symlinks were created.
+Report which symlinks were created. If any `CONVERT:` lines fired, surface that to the user explicitly **and** tell them to ask the admin to inspect `~/Ametyst/protocols/general-protocols/{rules,skills,agents,guides}/` for stray entries that the previous buggy install may have written into the shared repo. Always report `guides/<area>/` if it ended up empty, so the user understands that's expected behavior, not a missing step.
 
 ---
 
