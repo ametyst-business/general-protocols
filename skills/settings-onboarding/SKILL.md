@@ -230,6 +230,7 @@ If clone fails (no access), tell the user to ask the admin to confirm GitHub acc
 - Each entry inside is an individual symlink pointing directly at the source — never symlink-inside-symlink (which causes circular `ln -s` behavior).
 - Guides go under `.claude/guides/<source>/` (here `general/`) — never flat in `.claude/guides/`. This keeps provenance clear once multiple area-protocols are connected.
 - Symlink targets have no trailing slash. Some shells expand globs with one (`for entry in dir/*` may yield `dir/foo/`); `ln -s target/ link` is silently treated as a directory ref by macOS, losing symlink metadata so VS Code/Cursor stop showing the arrow → on the link. We strip with `${entry%/}`.
+- **`rules/communication-routing.md` is per-user state, NOT a protocol file.** It must be **copied** (real file), never symlinked. Reason: `/settings-become-teamspace-ic` mutates this file every time the user joins a new area; if it were a symlink, the Edit tool would follow it and write into the shared `~/Ametyst/protocols/general-protocols/rules/communication-routing.md` clone — dirtying upstream and causing `git pull --rebase` conflicts on the next protocol sync. Any other file flagged as per-user state (extend `PER_USER_RULES` below) must follow the same copy-not-symlink rule.
 
 ```bash
 SRC="$HOME/Ametyst/protocols/general-protocols"
@@ -254,7 +255,18 @@ for sub in rules skills agents guides; do
   fi
 done
 
+# Files inside rules/ that are per-user state — copy, never symlink.
+# Extend this list if more user-mutable rule files are introduced upstream.
+PER_USER_RULES=("communication-routing.md")
+
+is_per_user_rule() {
+  local name="$1"
+  for n in "${PER_USER_RULES[@]}"; do [ "$n" = "$name" ] && return 0; done
+  return 1
+}
+
 # SYMLINK rules / skills / agents — flat under .claude/<sub>/.
+# Exception: per-user files inside rules/ are COPIED (real file), not symlinked.
 for sub in rules skills agents; do
   mkdir -p "$DST/$sub"
   for entry in "$SRC/$sub"/*; do
@@ -262,6 +274,22 @@ for sub in rules skills agents; do
     name=$(basename "$entry")
     [ "$name" = ".gitkeep" ] && continue
     target="$DST/$sub/$name"
+
+    # Per-user state in rules/: copy on first install, leave alone if real file exists.
+    if [ "$sub" = "rules" ] && is_per_user_rule "$name"; then
+      if [ -L "$target" ]; then
+        echo "CONVERT: $target was a symlink (legacy install) — replacing with a copy so per-user edits stay local."
+        rm "$target"
+        cp "$entry" "$target"
+      elif [ ! -e "$target" ]; then
+        echo "COPY: $target (per-user state, copied from $entry)."
+        cp "$entry" "$target"
+      else
+        echo "KEEP: $target exists as a real file — preserving user's per-user state."
+      fi
+      continue
+    fi
+
     if [ -e "$target" ] && [ ! -L "$target" ]; then
       echo "SKIP: $target exists and is not a symlink"
       continue

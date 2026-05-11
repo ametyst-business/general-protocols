@@ -204,7 +204,19 @@ If the row already exists for `<area>`, do nothing.
 
 ### Step 6 — Update communication-routing.md
 
-Read `<working-dir>/.claude/rules/communication-routing.md`. Add a row to the routing table for the area, mapping the area's Slack channel and Notion databases to `.claude/rules/<area>-teamspace-communication/`.
+**Migration guard — run FIRST.** `communication-routing.md` is per-user state (the routing table grows every time this skill runs). It MUST be a real file, never a symlink. Legacy onboarding installs (before this fix) symlinked it from `~/Ametyst/protocols/general-protocols/rules/communication-routing.md` — editing through that symlink would write into the shared protocols clone, dirtying upstream and triggering `git pull --rebase` conflicts on the next protocol sync. Convert before editing:
+
+```bash
+ROUTING="<working-dir>/.claude/rules/communication-routing.md"
+if [ -L "$ROUTING" ]; then
+  echo "CONVERT: $ROUTING is a symlink (legacy install) — replacing with a real-file copy so this edit stays local."
+  real_target=$(readlink "$ROUTING")
+  rm "$ROUTING"
+  cp "$real_target" "$ROUTING"
+fi
+```
+
+Then read `<working-dir>/.claude/rules/communication-routing.md`. Add a row to the routing table for the area, mapping the area's Slack channel and Notion databases to `.claude/rules/<area>-teamspace-communication/`.
 
 Read the area's `notion-protocol.md` (just symlinked) to extract the database list, and add a row like:
 
@@ -213,6 +225,8 @@ Read the area's `notion-protocol.md` (just symlinked) to extract the database li
 ```
 
 If the row already exists, do nothing.
+
+If the migration guard fired, surface that to the user: tell them to check `git status` inside `~/Ametyst/protocols/general-protocols/` for any unintended edits to `rules/communication-routing.md` from previous runs of this skill, and `git checkout -- rules/communication-routing.md` there to discard them before the next `git pull`.
 
 ---
 
@@ -230,9 +244,63 @@ If the line already exists, do nothing.
 
 ### Step 8 — Verify Notion + Slack
 
-**Notion:** read the just-symlinked `<working-dir>/.claude/rules/<area>-teamspace-communication/notion-protocol.md`, find the Tasks database `data_source_id`, and run a test query with `Team` filter on `<Area>`. If it fails, tell the user the integration is missing the connection on the area backend page — admin must add it.
+#### Notion verification — two-stage with REST fallback
 
-**Slack:** post a test message to the area channel:
+Read the just-symlinked `<working-dir>/.claude/rules/<area>-teamspace-communication/notion-protocol.md`, find the Tasks database `data_source_id`. Per-backend scoping replaced the legacy `Team` field — do NOT use a `Team` filter; an unfiltered query (or a trivial `Status` filter) is the correct test.
+
+**Stage A — MCP query.** Call `mcp__notionApi__API-query-data-source` with just the `data_source_id` and `page_size: 1`. Three outcomes:
+
+1. **Success with results from the right workspace** → mark Notion as verified. Done.
+2. **Success but results look wrong** (e.g. the returned page titles clearly belong to a different workspace) → the loaded `notionApi` MCP is pointing at another Ametyst workspace. This happens when the user has multiple Notion integrations configured (multi-workspace setup). **Skip to Stage B.**
+3. **Error response** (`unauthorized`, `object_not_found`, network failure, etc.) → could be either (a) the integration isn't connected to the area backend page in Notion, or (b) the wrong MCP is loaded. **Skip to Stage B** before concluding (a).
+
+**Stage B — REST fallback.** Don't trust the MCP verdict yet — verify directly against the Notion REST API using the token the user pasted during onboarding.
+
+```bash
+WORKDIR="<working-dir>"
+DATA_SOURCE_ID="<value from notion-protocol.md>"
+
+# Locate the NOTION_TOKEN. Try project scope first (more specific), then global.
+NOTION_TOKEN=""
+SOURCE=""
+if [ -f "$WORKDIR/.claude/settings.local.json" ] && grep -q '"NOTION_TOKEN"' "$WORKDIR/.claude/settings.local.json" 2>/dev/null; then
+  NOTION_TOKEN=$(node -e "console.log((JSON.parse(require('fs').readFileSync('$WORKDIR/.claude/settings.local.json','utf8')).mcpServers?.notionApi?.env?.NOTION_TOKEN)||'')")
+  SOURCE="project ($WORKDIR/.claude/settings.local.json)"
+fi
+if [ -z "$NOTION_TOKEN" ] && [ -f "$HOME/.claude/settings.json" ] && grep -q '"NOTION_TOKEN"' "$HOME/.claude/settings.json" 2>/dev/null; then
+  NOTION_TOKEN=$(node -e "console.log((JSON.parse(require('fs').readFileSync(process.env.HOME+'/.claude/settings.json','utf8')).mcpServers?.notionApi?.env?.NOTION_TOKEN)||'')")
+  SOURCE="global (~/.claude/settings.json)"
+fi
+
+if [ -z "$NOTION_TOKEN" ]; then
+  echo "ERROR: NOTION_TOKEN not found in either settings file — cannot run REST fallback."
+  exit 1
+fi
+
+echo "REST: using token from $SOURCE."
+HTTP_STATUS=$(curl -sS -o /tmp/notion_verify.json -w "%{http_code}" \
+  -X POST "https://api.notion.com/v1/data_sources/$DATA_SOURCE_ID/query" \
+  -H "Authorization: Bearer $NOTION_TOKEN" \
+  -H "Notion-Version: 2025-09-03" \
+  -H "Content-Type: application/json" \
+  -d '{"page_size":1}')
+echo "REST HTTP $HTTP_STATUS"
+head -c 500 /tmp/notion_verify.json; echo
+```
+
+Interpret the REST result:
+
+- **HTTP 200** → the token has access to that data source. Notion is verified. If Stage A also failed, tell the user: *"The loaded Notion MCP in this session is pointing at a different workspace, but your configured token is correct. Restart Claude Code so the right MCP loads (and resume this session)."* — then mark Notion as verified-pending-restart.
+- **HTTP 401 / 403** → token is invalid or the Notion integration is **not connected** to the area's backend page. Tell the user to ask the admin to add the integration to the `<area>` Notion backend page.
+- **HTTP 404 (`object_not_found`)** → integration connected but doesn't have access to this specific data source. Same admin ask: connect the integration to the area's backend page (which propagates to its data sources).
+- **HTTP 429** → rate limited. Retry once after ~5s. If still 429, move on and flag for the user.
+- **Other / network error** → surface verbatim. Don't fabricate a diagnosis.
+
+Only conclude *"integration missing on backend page"* after Stage B has returned 401/403/404. A Stage A failure alone is not enough — it's frequently caused by the wrong MCP being loaded, not by a real integration gap.
+
+#### Slack verification
+
+Post a test message to the area channel:
 
 ```
 :wave: *<Name> joining as IC of <Area>*
@@ -245,7 +313,7 @@ Channel IDs (lookup from area's `slack-protocol.md`):
 - product → (read from protocol)
 - gtm → (read from protocol)
 
-If post fails (`not_in_channel`), ask the admin to invite the bot.
+If post fails (`not_in_channel`), ask the admin to invite the bot. If post fails with auth error in a multi-workspace setup, suggest the user restart Claude Code so the correct Slack MCP loads.
 
 ---
 
