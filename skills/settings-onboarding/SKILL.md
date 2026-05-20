@@ -147,6 +147,16 @@ Run this in your terminal:
 
 This installs both MCP servers globally so they're available to Claude Code.
 
+> **Heads-up — known deprecation warning (Slack).** During install npm will
+> print `npm warn deprecated @modelcontextprotocol/server-slack@2025.4.25:
+> Package no longer supported.` This is **expected and safe to ignore for now**
+> — the package still works and is what the rest of this skill (and
+> `/settings-become-teamspace-ic`) targets. The Anthropic-maintained Slack MCP
+> was archived; Ametyst is tracking actively-maintained alternatives (e.g.
+> `slack-mcp-server` by korotovsky) and will swap the install command here
+> when the migration is ready. If you're onboarding a new contributor and the
+> warning shows up, reassure them: no action needed.
+
 ## 3. Configure the settings file
 
 Open (or create) the settings file at the path chosen in Step 1, and add
